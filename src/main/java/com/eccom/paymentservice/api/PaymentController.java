@@ -1,6 +1,7 @@
 package com.eccom.paymentservice.api;
 
 import com.eccom.paymentservice.service.PaymentService;
+import com.eccom.paymentservice.service.RefundService;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.UUID;
@@ -18,9 +19,11 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 public class PaymentController {
 
     private final PaymentService paymentService;
+    private final RefundService refundService;
 
-    public PaymentController(PaymentService paymentService) {
+    public PaymentController(PaymentService paymentService, RefundService refundService) {
         this.paymentService = paymentService;
+        this.refundService = refundService;
     }
 
     @PostMapping
@@ -38,4 +41,15 @@ public class PaymentController {
     public PaymentResponse getPayment(@PathVariable UUID id) {
         return paymentService.get(id);
     }
+
+    @PostMapping("/{paymentId}/refunds")
+    public ResponseEntity<RefundResponse> createRefund(@PathVariable UUID paymentId) {
+        RefundResponse refund = refundService.create(paymentId);
+        URI location = ServletUriComponentsBuilder.fromCurrentContextPath()
+                .path("/api/v1/refunds/{id}")
+                .buildAndExpand(refund.id())
+                .toUri();
+        return ResponseEntity.created(location).body(refund);
+    }
+
 }
