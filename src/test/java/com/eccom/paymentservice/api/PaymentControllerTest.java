@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
+import com.eccom.paymentservice.service.PaymentService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -24,6 +25,9 @@ class PaymentControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private PaymentService paymentService;
 
     @Test
     void createsAndRetrievesPayment() throws Exception {
@@ -113,5 +117,76 @@ class PaymentControllerTest {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"));
+    }
+
+    @Test
+    void createsAndRetrievesRefundForFailedPayment() throws Exception {
+        MvcResult paymentResult = mockMvc.perform(post("/api/v1/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount":19.99,"currency":"USD","description":"Failed order"}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String paymentId = JsonPath.read(paymentResult.getResponse().getContentAsString(), "$.id");
+        paymentService.markFailed(java.util.UUID.fromString(paymentId));
+
+        MvcResult refundResult = mockMvc.perform(post("/api/v1/payments/{id}/refunds", paymentId))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Location", matchesPattern(".*/api/v1/refunds/[0-9a-f-]{36}")))
+                .andExpect(jsonPath("$.paymentId").value(paymentId))
+                .andExpect(jsonPath("$.amount").value(19.99))
+                .andExpect(jsonPath("$.currency").value("USD"))
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.createdAt").isNotEmpty())
+                .andReturn();
+
+        String refundId = JsonPath.read(refundResult.getResponse().getContentAsString(), "$.id");
+        mockMvc.perform(get("/api/v1/refunds/{id}", refundId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(refundId))
+                .andExpect(jsonPath("$.paymentId").value(paymentId));
+    }
+
+    @Test
+    void rejectsRefundForPaymentThatHasNotFailed() throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/v1/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount":5.00,"currency":"USD"}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String paymentId = JsonPath.read(result.getResponse().getContentAsString(), "$.id");
+
+        mockMvc.perform(post("/api/v1/payments/{id}/refunds", paymentId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("Payment state conflict"));
+    }
+
+    @Test
+    void rejectsDuplicateRefundRequests() throws Exception {
+        MvcResult paymentResult = mockMvc.perform(post("/api/v1/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount":5.00,"currency":"USD"}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String paymentId = JsonPath.read(paymentResult.getResponse().getContentAsString(), "$.id");
+        paymentService.markFailed(java.util.UUID.fromString(paymentId));
+
+        mockMvc.perform(post("/api/v1/payments/{id}/refunds", paymentId))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/v1/payments/{id}/refunds", paymentId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("Payment state conflict"));
+    }
+
+    @Test
+    void returnsNotFoundForRefundOfUnknownPayment() throws Exception {
+        mockMvc.perform(post("/api/v1/payments/{id}/refunds", "e1530b6d-e5a5-43bb-9140-e5fc0b55c6e8"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.title").value("Payment not found"));
     }
 }

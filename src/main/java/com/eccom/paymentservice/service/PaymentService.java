@@ -33,4 +33,22 @@ public class PaymentService {
         }
         return payment;
     }
+
+    public PaymentResponse markFailed(UUID id) {
+        return payments.compute(id, (paymentId, payment) -> {
+            if (payment == null) {
+                throw new PaymentNotFoundException(paymentId);
+            }
+            if (payment.status() != PaymentStatus.PENDING) {
+                throw new InvalidPaymentStateException(paymentId, payment.status(), PaymentStatus.PENDING);
+            }
+            return new PaymentResponse(
+                    payment.id(),
+                    payment.amount(),
+                    payment.currency(),
+                    payment.description(),
+                    PaymentStatus.FAILED,
+                    payment.createdAt());
+        });
+    }
 }
